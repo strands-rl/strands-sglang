@@ -218,6 +218,41 @@ class TestHealth:
         assert result is False
 
 
+class TestMaxModelLen:
+    """Tests for reading the server context length off `/v1/models`."""
+
+    @staticmethod
+    def _client(get):
+        client = SGLangClient(base_url="http://localhost:30000")
+        mock_session = MagicMock()
+        mock_session.get = get
+        client._get_session = MagicMock(return_value=mock_session)
+        return client
+
+    async def test_reads_first_reported_length(self):
+        body = {"data": [{"id": "adapter", "max_model_len": None}, {"id": "base", "max_model_len": 131072}]}
+        client = self._client(MagicMock(return_value=_mock_response(200, json_data=body)))
+        assert await client.max_model_len() == 131072
+
+    async def test_cached_after_first_query(self):
+        get = MagicMock(return_value=_mock_response(200, json_data={"data": [{"max_model_len": 4096}]}))
+        client = self._client(get)
+        await client.max_model_len()
+        assert await client.max_model_len() == 4096
+        assert get.call_count == 1
+
+    async def test_none_on_http_error(self):
+        client = self._client(MagicMock(return_value=_mock_response(404)))
+        assert await client.max_model_len() is None
+
+    async def test_unreadable_is_cached_too(self):
+        get = MagicMock(side_effect=Exception("Connection refused"))
+        client = self._client(get)
+        await client.max_model_len()
+        assert await client.max_model_len() is None
+        assert get.call_count == 1
+
+
 def _mock_response(status: int, body: str = "", json_data: dict | None = None):
     """Create a mock aiohttp response with async context manager support."""
     mock_resp = MagicMock()

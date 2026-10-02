@@ -88,6 +88,7 @@ class SGLangClient:
         self._connect_timeout = connect_timeout
         self._session: aiohttp.ClientSession | None = None
         self._is_multimodal: bool | None = None
+        self._max_model_len: int | None = None  # 0 once queried and unreadable
 
         logger.info(
             "SGLangClient initialized: base_url=%s, max_connections=%s, timeout=%s, max_retries=%s",
@@ -269,3 +270,21 @@ class SGLangClient:
         info = await self.model_info()
         self._is_multimodal = bool(info.get("has_image_understanding", False)) if info else False
         return self._is_multimodal
+
+    async def max_model_len(self) -> int | None:
+        """The server's context length from `/v1/models`, or `None` if the server doesn't report one.
+
+        This is the length SGLang checks prompt + `max_new_tokens` against, so it already reflects a
+        `--context-length` override. Cached after the first query, unreadable included.
+        """
+        if self._max_model_len is None:
+            self._max_model_len = 0
+            try:
+                session = self._get_session()
+                async with session.get("/v1/models") as resp:
+                    if resp.status < 400:
+                        models = (await resp.json(content_type=None)).get("data") or []
+                        self._max_model_len = next((m["max_model_len"] for m in models if m.get("max_model_len")), 0)
+            except Exception:
+                pass
+        return self._max_model_len or None

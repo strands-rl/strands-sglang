@@ -264,6 +264,7 @@ def _make_model_with_mock_client(mock_tokenizer: MagicMock, generate_return: dic
     client = SGLangClient(base_url="http://localhost:30000")
     client._is_multimodal = False
     client.generate = AsyncMock(return_value=generate_return or _make_generate_response())
+    client.max_model_len = AsyncMock(return_value=None)
     model = SGLangModel(client=client, tokenizer=mock_tokenizer, **config)
     return model, client
 
@@ -304,9 +305,31 @@ class TestStreamContextWindow:
         )
         assert sent == 16
 
-    async def test_untouched_without_limit(self, mock_tokenizer):
+    async def test_untouched_without_any_limit(self, mock_tokenizer):
         sent = await self._sent_max_new_tokens(mock_tokenizer, sampling_params={"max_new_tokens": 16})
         assert sent == 16
+
+    async def test_server_context_when_unset(self, mock_tokenizer):
+        model, client = _make_model_with_mock_client(mock_tokenizer, sampling_params={"max_new_tokens": 16})
+        client.max_model_len = AsyncMock(return_value=8)
+        async for _ in model.stream([{"role": "user", "content": [{"text": "hi"}]}]):
+            pass
+        assert client.generate.call_args.kwargs["sampling_params"]["max_new_tokens"] == 3
+
+    async def test_configured_limit_wins_over_server(self, mock_tokenizer):
+        model, client = _make_model_with_mock_client(
+            mock_tokenizer, context_window_limit=10, sampling_params={"max_new_tokens": 16}
+        )
+        client.max_model_len = AsyncMock(return_value=100)
+        async for _ in model.stream([{"role": "user", "content": [{"text": "hi"}]}]):
+            pass
+        assert client.generate.call_args.kwargs["sampling_params"]["max_new_tokens"] == 5
+
+    async def test_null_max_new_tokens_left_to_server(self, mock_tokenizer):
+        sent = await self._sent_max_new_tokens(
+            mock_tokenizer, context_window_limit=8, sampling_params={"max_new_tokens": None}
+        )
+        assert sent is None
 
     async def test_not_invented_when_unset(self, mock_tokenizer):
         assert await self._sent_max_new_tokens(mock_tokenizer, context_window_limit=8) is None
