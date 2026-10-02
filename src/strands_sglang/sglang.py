@@ -53,7 +53,8 @@ class SGLangModel(Model):
         """Configuration options for SGLang generation.
 
         Inherits `context_window_limit` from `BaseModelConfig`, which is where conversation managers
-        read it from via `Model.context_window_limit`; without it they use a hardcoded default.
+        read it from via `Model.context_window_limit`; without it they use a hardcoded default. When
+        set, `stream()` also lowers `max_new_tokens` to whatever the prompt leaves of it.
         """
 
         sampling_params: dict[str, Any] | None  # Passed to /generate endpoint
@@ -327,6 +328,17 @@ class SGLangModel(Model):
         # Tracking token IDs in the rollout to ensure the token-in feature
         input_ids = self.rollout.token_ids + new_input_ids
         image_data = self.collect_image_data(messages, is_multimodal=is_multimodal)
+
+        # SGLang rejects any request whose prompt + max_new_tokens exceeds the context, so a fixed
+        # max_new_tokens caps the prompt at context - max_new_tokens even when the reply would be short.
+        if limit := self.context_window_limit:
+            room = limit - len(input_ids)
+            if room <= 0:
+                raise ContextWindowOverflowException(
+                    f"Prompt of {len(input_ids)} tokens fills the {limit}-token context"
+                )
+            if "max_new_tokens" in sampling_params:
+                sampling_params["max_new_tokens"] = min(sampling_params["max_new_tokens"], room)
 
         # Assistant message start
         yield {"messageStart": {"role": "assistant"}}

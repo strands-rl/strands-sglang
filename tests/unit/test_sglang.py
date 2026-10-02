@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 import numpy as np
 import pybase64
 import pytest
+from strands.types.exceptions import ContextWindowOverflowException
 
 from strands_sglang import SGLangModel
 from strands_sglang.client import SGLangClient
@@ -280,6 +281,44 @@ class TestStreamDefaults:
 
         call_kwargs = client.generate.call_args
         assert call_kwargs.kwargs["sampling_params"]["skip_special_tokens"] is False
+
+
+class TestStreamContextWindow:
+    """Tests for fitting max_new_tokens into context_window_limit (the mock prompt is 5 tokens)."""
+
+    async def _sent_max_new_tokens(self, mock_tokenizer: MagicMock, **config: object) -> int | None:
+        model, client = _make_model_with_mock_client(mock_tokenizer, **config)
+        async for _ in model.stream([{"role": "user", "content": [{"text": "hi"}]}]):
+            pass
+        return client.generate.call_args.kwargs["sampling_params"].get("max_new_tokens")
+
+    async def test_lowered_to_remaining_room(self, mock_tokenizer):
+        sent = await self._sent_max_new_tokens(
+            mock_tokenizer, context_window_limit=8, sampling_params={"max_new_tokens": 16}
+        )
+        assert sent == 3
+
+    async def test_kept_when_it_fits(self, mock_tokenizer):
+        sent = await self._sent_max_new_tokens(
+            mock_tokenizer, context_window_limit=100, sampling_params={"max_new_tokens": 16}
+        )
+        assert sent == 16
+
+    async def test_untouched_without_limit(self, mock_tokenizer):
+        sent = await self._sent_max_new_tokens(mock_tokenizer, sampling_params={"max_new_tokens": 16})
+        assert sent == 16
+
+    async def test_not_invented_when_unset(self, mock_tokenizer):
+        assert await self._sent_max_new_tokens(mock_tokenizer, context_window_limit=8) is None
+
+    async def test_full_prompt_overflows_without_request(self, mock_tokenizer):
+        model, client = _make_model_with_mock_client(
+            mock_tokenizer, context_window_limit=5, sampling_params={"max_new_tokens": 16}
+        )
+        with pytest.raises(ContextWindowOverflowException):
+            async for _ in model.stream([{"role": "user", "content": [{"text": "hi"}]}]):
+                pass
+        client.generate.assert_not_called()
 
 
 class TestStreamRoutedExperts:
