@@ -25,6 +25,7 @@ def model(mock_tokenizer):
     """Create an SGLangModel with mock tokenizer."""
     client = SGLangClient(base_url="http://localhost:30000")
     client._is_multimodal = False
+    client._max_model_len = 0  # server reports no length; no real session is opened
     model = SGLangModel(client=client, tokenizer=mock_tokenizer)
     model.__dict__["message_separator"] = ""  # override cached_property (mock has no real template)
     return model
@@ -264,7 +265,7 @@ def _make_model_with_mock_client(mock_tokenizer: MagicMock, generate_return: dic
     client = SGLangClient(base_url="http://localhost:30000")
     client._is_multimodal = False
     client.generate = AsyncMock(return_value=generate_return or _make_generate_response())
-    client.max_model_len = AsyncMock(return_value=None)
+    client._max_model_len = 0  # server reports no length; no real session is opened
     model = SGLangModel(client=client, tokenizer=mock_tokenizer, **config)
     return model, client
 

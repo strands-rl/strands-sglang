@@ -42,7 +42,9 @@ def mock_tokenizer():
 
 @pytest.fixture
 def client():
-    return SGLangClient(base_url="http://localhost:30000")
+    client = SGLangClient(base_url="http://localhost:30000")
+    client._max_model_len = 0  # server reports no length; no real session is opened
+    return client
 
 
 @pytest.fixture
